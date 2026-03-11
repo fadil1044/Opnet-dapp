@@ -112,35 +112,16 @@ export function useOPWallet() {
   const sendTransaction = useCallback(async (txData) => {
     if (!isConnected) throw new Error('Wallet not connected');
     const wallet = window.opnet;
-
-    // Log available methods so we know what OP_WALLET exposes
-    console.log('OP_WALLET available methods:', Object.getOwnPropertyNames(wallet));
-    console.log('OP_WALLET prototype methods:', Object.getOwnPropertyNames(Object.getPrototypeOf(wallet)));
-
     try {
-      // Try every possible method OP_WALLET might use
+      if (typeof wallet.signInteraction === 'function')
+        return await wallet.signInteraction(txData);
+      if (typeof wallet.signAndSend === 'function')
+        return await wallet.signAndSend(txData);
+      if (typeof wallet.signTransaction === 'function')
+        return await wallet.signTransaction(txData);
       if (typeof wallet.sendBitcoin === 'function')
         return await wallet.sendBitcoin(txData.to, txData.amount);
-      if (typeof wallet.sendTransaction === 'function')
-        return await wallet.sendTransaction(txData);
-      if (typeof wallet.signAndBroadcastTransaction === 'function')
-        return await wallet.signAndBroadcastTransaction(txData);
-      if (typeof wallet.broadcast === 'function')
-        return await wallet.broadcast(txData);
-      if (typeof wallet.send === 'function')
-        return await wallet.send(txData);
-      if (typeof wallet.transfer === 'function')
-        return await wallet.transfer(txData.to, txData.amount);
-      if (typeof wallet.signPsbt === 'function')
-        return await wallet.signPsbt(txData);
-
-      // Last resort — show all methods in error
-      const allMethods = [
-        ...Object.getOwnPropertyNames(wallet),
-        ...Object.getOwnPropertyNames(Object.getPrototypeOf(wallet))
-      ].filter(k => typeof wallet[k] === 'function');
-
-      throw new Error(`No send method found. Available: ${allMethods.join(', ')}`);
+      throw new Error('Update OP_WALLET to latest version');
     } catch (err) {
       if (err.code === 4001) throw new Error('Transaction rejected by user');
       throw err;
@@ -151,17 +132,13 @@ export function useOPWallet() {
     if (!isConnected) throw new Error('Wallet not connected');
     const wallet = window.opnet;
     try {
+      if (typeof wallet.signInteraction === 'function')
+        return await wallet.signInteraction({ to: contractAddress, method, params, value });
       if (typeof wallet.executeContract === 'function')
         return await wallet.executeContract(contractAddress, method, params, value);
-      if (typeof wallet.interactWithContract === 'function')
-        return await wallet.interactWithContract(contractAddress, method, params);
-      if (typeof wallet.contractCall === 'function')
-        return await wallet.contractCall(contractAddress, method, params, value);
-      return await sendTransaction({
-        to: contractAddress,
-        data: JSON.stringify({ method, params }),
-        value,
-      });
+      if (typeof wallet.signAndSend === 'function')
+        return await wallet.signAndSend({ to: contractAddress, data: { method, params }, value });
+      throw new Error('Update OP_WALLET to latest version');
     } catch (err) {
       if (err.code === 4001) throw new Error('Transaction rejected by user');
       throw err;
