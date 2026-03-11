@@ -13,80 +13,114 @@ export function useOPWallet() {
   const [walletInstalled, setWalletInstalled] = useState(false);
 
   useEffect(() => {
-    const check = () => {
-      if (typeof window !== 'undefined' && window.opnet) {
+    const checkWallet = () => {
+      // OP_WALLET injects as window.opnet
+      if (window.opnet) {
         setProvider(window.opnet);
         setWalletInstalled(true);
         return true;
       }
       return false;
     };
-    if (!check()) {
-      const t = setTimeout(check, 1000);
-      return () => clearTimeout(t);
+
+    // Check immediately
+    if (!checkWallet()) {
+      // Wait for extension to inject
+      window.addEventListener('load', checkWallet);
+      const t1 = setTimeout(checkWallet, 500);
+      const t2 = setTimeout(checkWallet, 1500);
+      return () => {
+        window.removeEventListener('load', checkWallet);
+        clearTimeout(t1);
+        clearTimeout(t2);
+      };
     }
   }, []);
 
-  useEffect(() => {
-    if (!provider) return;
-    const onAccount = (accounts) => {
-      if (accounts?.length > 0) setAddress(accounts[0]);
-      else disconnect();
-    };
-    const onNetwork = (n) => setNetwork(n);
-    provider.on?.('accountsChanged', onAccount);
-    provider.on?.('networkChanged', onNetwork);
-    return () => {
-      provider.removeListener?.('accountsChanged', onAccount);
-      provider.removeListener?.('networkChanged', onNetwork);
-    };
-  }, [provider]);
-
-  const fetchBalance = useCallback(async (addr) => {
-    const target = addr || address;
-    if (!target) return;
-    try {
-      const res = await fetch(`${OP_NET_RPC}/api/v1/address/balance`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ address: target }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setBalance(data?.balance ?? data?.result ?? null);
-      }
-    } catch (e) {}
-  }, [address]);
-
   const connect = useCallback(async () => {
     setError(null);
-    if (!provider) {
-      setError('OP_WALLET not installed.');
+
+    const wallet = window.opnet;
+
+    if (!wallet) {
+      setError('OP_WALLET not found. Please install it.');
       return false;
     }
-    setIsConnecting(true);
-    try {
-      let accounts;
-      if (provider.requestAccounts) accounts = await provider.requestAccounts();
-      else if (provider.connect) {
-        const r = await provider.connect();
-        accounts = r?.address ? [r.address] : r;
-      } else if (provider.getAccounts) accounts = await provider.getAccounts();
 
-      if (!accounts?.length) throw new Error('No accounts returned');
-      const addr = typeof accounts[0] === 'string' ? accounts[0] : accounts[0]?.address;
-      setAddress(addr);
+    setIsConnecting(true);
+
+    try {
+      let result;
+
+      // OP_WALLET primary connect method
+      if (typeof wallet.connect === 'function') {
+        result = await wallet.connect();
+      } else if (typeof wallet.requestAccounts === 'function') {
+        result = await wallet.requestAccounts();
+      } else if (typeof wallet.enable === 'function') {
+        result = await wallet.enable();
+      } else {
+        throw new Error('No connect method found on OP_WALLET');
+      }
+
+      console.log('OP_WALLET connect result:', result);
+
+      // Extract address from result
+      let userAddress = null;
+
+      if (typeof result === 'string') {
+        userAddress = result;
+      } else if (Array.isArray(result)) {
+        userAddress = result[0]?.address || result[0];
+      } else if (result?.address) {
+        userAddress = result.address;
+      } else if (result?.accounts) {
+        userAddress = result.accounts[0]?.address || result.accounts[0];
+      }
+
+      if (!userAddress) {
+        throw new Error('Could not get address from OP_WALLET');
+      }
+
+      setAddress(userAddress);
+      setProvider(wallet);
+      setWalletInstalled(true);
       setIsConnected(true);
-      try { if (provider.getNetwork) setNetwork(await provider.getNetwork()); } catch {}
-      await fetchBalance(addr);
+
+      // Get network
+      try {
+        if (wallet.getNetwork) {
+          const net = await wallet.getNetwork();
+          setNetwork(net);
+        }
+      } catch (e) {}
+
+      // Get balance
+      try {
+        const res = await fetch(`${OP_NET_RPC}/api/v1/address/balance`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ address: userAddress }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setBalance(data?.balance ?? data?.result ?? '0');
+        }
+      } catch (e) {}
+
       return true;
     } catch (err) {
-      setError(err.code === 4001 ? 'Rejected by user.' : err.message || 'Connection failed');
+      console.error('Connect error:', err);
+      if (err.code === 4001 || err.message?.includes('rejected')) {
+        setError('Connection rejected by user.');
+      } else {
+        setError(err.message || 'Failed to connect');
+      }
       return false;
     } finally {
       setIsConnecting(false);
     }
-  }, [provider, fetchBalance]);
+  }, []);
 
   const disconnect = useCallback(() => {
     setAddress(null);
@@ -94,43 +128,44 @@ export function useOPWallet() {
     setNetwork(null);
     setIsConnected(false);
     setError(null);
-    try { provider?.disconnect?.(); } catch {}
-  }, [provider]);
+    try { window.opnet?.disconnect?.(); } catch (e) {}
+  }, []);
 
   const signMessage = useCallback(async (message) => {
-    if (!provider || !isConnected) throw new Error('Wallet not connected');
+    if (!isConnected) throw new Error('Wallet not connected');
     try {
-      if (provider.signMessage) return await provider.signMessage(message);
-      throw new Error('signMessage not supported');
+      return await window.opnet.signMessage(message);
     } catch (err) {
-      if (err.code === 4001) throw new Error('User rejected');
+      if (err.code === 4001) throw new Error('User rejected signature');
       throw err;
     }
-  }, [provider, isConnected]);
+  }, [isConnected]);
 
   const sendTransaction = useCallback(async (txData) => {
-    if (!provider || !isConnected) throw new Error('Wallet not connected');
+    if (!isConnected) throw new Error('Wallet not connected');
+    const wallet = window.opnet;
     try {
-      if (provider.sendBitcoin) return await provider.sendBitcoin(txData.to, txData.amount);
-      if (provider.sendTransaction) return await provider.sendTransaction(txData);
-      if (provider.signAndBroadcastTransaction) return await provider.signAndBroadcastTransaction(txData);
-      throw new Error('No send method available');
+      if (wallet.sendBitcoin) return await wallet.sendBitcoin(txData.to, txData.amount);
+      if (wallet.sendTransaction) return await wallet.sendTransaction(txData);
+      if (wallet.signAndBroadcastTransaction) return await wallet.signAndBroadcastTransaction(txData);
+      throw new Error('No send method on wallet');
     } catch (err) {
-      if (err.code === 4001) throw new Error('Rejected by user');
+      if (err.code === 4001) throw new Error('Transaction rejected by user');
       throw err;
     }
-  }, [provider, isConnected]);
+  }, [isConnected]);
 
   const executeContract = useCallback(async (contractAddress, method, params = [], value = 0) => {
-    if (!provider || !isConnected) throw new Error('Wallet not connected');
+    if (!isConnected) throw new Error('Wallet not connected');
+    const wallet = window.opnet;
     try {
-      if (provider.executeContract) return await provider.executeContract(contractAddress, method, params, value);
+      if (wallet.executeContract) return await wallet.executeContract(contractAddress, method, params, value);
       return await sendTransaction({ to: contractAddress, data: JSON.stringify({ method, params }), value });
     } catch (err) {
-      if (err.code === 4001) throw new Error('Rejected by user');
+      if (err.code === 4001) throw new Error('Transaction rejected by user');
       throw err;
     }
-  }, [provider, isConnected, sendTransaction]);
+  }, [isConnected, sendTransaction]);
 
   const callContract = useCallback(async (contractAddress, method, params = []) => {
     try {
@@ -146,9 +181,19 @@ export function useOPWallet() {
   }, [address]);
 
   return {
-    provider, address, balance, network,
-    isConnecting, isConnected, error, walletInstalled,
-    connect, disconnect, signMessage, sendTransaction,
-    executeContract, callContract, fetchBalance,
+    provider,
+    address,
+    balance,
+    network,
+    isConnecting,
+    isConnected,
+    error,
+    walletInstalled,
+    connect,
+    disconnect,
+    signMessage,
+    sendTransaction,
+    executeContract,
+    callContract,
   };
 }
