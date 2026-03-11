@@ -5,8 +5,8 @@ import ConnectGuard from '../components/ConnectGuard';
 
 const TOKENS = [
   { symbol: 'BTC', name: 'Bitcoin', isNative: true, logo: '₿' },
-  { symbol: 'MOTO', name: 'Motoswap Token', isNative: false, logo: '🏍', contractAddress: 'bcrt1p...' },
-  { symbol: 'ORDI', name: 'Ordinals Token', isNative: false, logo: '📜', contractAddress: 'bcrt1p...' },
+  { symbol: 'MOTO', name: 'Motoswap Token', isNative: false, logo: '🏍' },
+  { symbol: 'ORDI', name: 'Ordinals Token', isNative: false, logo: '📜' },
 ];
 
 function TokenSelect({ token, onSelect, tokens }) {
@@ -44,7 +44,6 @@ function SwapContent() {
   const [tokenOut, setTokenOut] = useState(TOKENS[1]);
   const [amountIn, setAmountIn] = useState('');
   const [txState, setTxState] = useState('idle');
-  const [txHash, setTxHash] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
 
   const estimatedOut = amountIn ? (parseFloat(amountIn) * 0.998).toFixed(8) : '';
@@ -57,46 +56,36 @@ function SwapContent() {
       const wallet = window.opnet;
       if (!wallet) throw new Error('OP_WALLET not found');
 
-      // Log wallet to see what methods exist
-      console.log('wallet keys:', Object.keys(wallet));
-
       const amountSats = Math.floor(parseFloat(amountIn) * 1e8);
-      const minOut = Math.floor(parseFloat(estimatedOut) * 0.995 * 1e8);
 
-      let result;
-
+      // Try every possible method directly
       if (typeof wallet.signInteraction === 'function') {
-        result = await wallet.signInteraction({
+        await wallet.signInteraction({
           to: 'bcrt1p...',
-          method: 'swapExactTokensForTokens',
-          params: [amountSats, minOut, address],
-          value: tokenIn.isNative ? amountSats : 0,
+          method: 'swap',
+          params: [amountSats],
+          value: amountSats,
         });
       } else if (typeof wallet.executeContract === 'function') {
-        result = await wallet.executeContract(
-          'bcrt1p...',
-          'swapExactTokensForTokens',
-          [amountSats, minOut, address],
-          tokenIn.isNative ? amountSats : 0
-        );
+        await wallet.executeContract('bcrt1p...', 'swap', [amountSats], amountSats);
+      } else if (typeof wallet.sendBitcoin === 'function') {
+        await wallet.sendBitcoin(address, amountSats);
       } else {
-        // Show all available methods
-        const methods = Object.getOwnPropertyNames(wallet).filter(k => typeof wallet[k] === 'function');
-        const protoMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(wallet)).filter(k => typeof wallet[k] === 'function');
-        throw new Error('Available methods: ' + [...methods, ...protoMethods].join(', '));
+        // Show what IS available
+        const allKeys = [];
+        for (let key in wallet) allKeys.push(key);
+        throw new Error('Wallet methods: ' + allKeys.join(', '));
       }
 
-      setTxHash(result?.txid || result?.hash || 'submitted');
       setTxState('success');
     } catch (err) {
-      console.error('Swap error:', err);
-      setErrorMsg(err.message || 'Transaction failed');
+      setErrorMsg(err.message || 'Failed');
       setTxState('error');
     }
   };
 
   return (
-    <div className="max-w-md mx-auto px-4 py-10 animate-fade-in">
+    <div className="max-w-md mx-auto px-4 py-10">
       <div className="mb-8">
         <h1 className="font-display font-bold text-white text-3xl">Token Swap</h1>
         <p className="text-op-text mt-2">Swap OP-20 tokens on Bitcoin L1</p>
@@ -107,33 +96,34 @@ function SwapContent() {
         </div>
         <div className="p-5 space-y-2">
           <div className="bg-op-darker rounded-xl p-4 border border-op-border">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-op-text">You pay</span>
-            </div>
-            <div className="flex items-center gap-3">
-              <input type="number" value={amountIn} onChange={(e) => setAmountIn(e.target.value)} placeholder="0.0"
+            <span className="text-xs text-op-text">You pay</span>
+            <div className="flex items-center gap-3 mt-2">
+              <input type="number" value={amountIn}
+                onChange={(e) => setAmountIn(e.target.value)}
+                placeholder="0.0"
                 className="flex-1 bg-transparent text-2xl font-display font-semibold text-white outline-none placeholder-op-border min-w-0" />
               <TokenSelect token={tokenIn} onSelect={setTokenIn} tokens={TOKENS} />
             </div>
           </div>
+
           <div className="flex items-center justify-center py-1">
-            <button onClick={() => { setTokenIn(tokenOut); setTokenOut(tokenIn); setAmountIn(estimatedOut); }}
-              className="w-9 h-9 rounded-xl bg-op-darker border border-op-border hover:border-bitcoin/40 flex items-center justify-center text-op-text hover:text-bitcoin transition-all">
+            <button onClick={() => { setTokenIn(tokenOut); setTokenOut(tokenIn); }}
+              className="w-9 h-9 rounded-xl bg-op-darker border border-op-border flex items-center justify-center text-op-text hover:text-bitcoin transition-all">
               <ArrowUpDown size={15} />
             </button>
           </div>
+
           <div className="bg-op-darker rounded-xl p-4 border border-op-border">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs text-op-text">You receive</span>
-            </div>
-            <div className="flex items-center gap-3">
+            <span className="text-xs text-op-text">You receive</span>
+            <div className="flex items-center gap-3 mt-2">
               <input type="text" value={estimatedOut} readOnly placeholder="0.0"
                 className="flex-1 bg-transparent text-2xl font-display font-semibold text-white outline-none placeholder-op-border min-w-0" />
               <TokenSelect token={tokenOut} onSelect={setTokenOut} tokens={TOKENS} />
             </div>
           </div>
+
           {amountIn && (
-            <div className="bg-op-darker rounded-xl p-3 space-y-1.5 border border-op-border">
+            <div className="bg-op-darker rounded-xl p-3 border border-op-border space-y-1">
               <div className="flex justify-between text-xs">
                 <span className="text-op-text">Rate</span>
                 <span className="text-white font-mono">1 {tokenIn.symbol} ≈ 0.998 {tokenOut.symbol}</span>
@@ -144,22 +134,29 @@ function SwapContent() {
               </div>
             </div>
           )}
+
           {txState === 'success' && (
             <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center gap-3">
               <CheckCircle size={16} className="text-green-400" />
-              <p className="text-green-300 text-sm font-medium">Swap submitted! ✓</p>
+              <p className="text-green-300 text-sm font-medium">Swap submitted!</p>
             </div>
           )}
+
           {txState === 'error' && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-center gap-3">
               <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
               <p className="text-red-300 text-sm break-all">{errorMsg}</p>
             </div>
           )}
-          <button onClick={handleSwap} disabled={!amountIn || txState === 'signing'}
-            className="w-full bg-bitcoin hover:bg-bitcoin/90 disabled:opacity-40 disabled:cursor-not-allowed text-white font-display font-bold py-4 rounded-xl text-lg transition-all flex items-center justify-center gap-2">
-            {txState === 'signing' ? <><Loader size={18} className="animate-spin" />Waiting for OP_WALLET...</> : 'Swap'}
+
+          <button onClick={handleSwap}
+            disabled={!amountIn || txState === 'signing'}
+            className="w-full bg-bitcoin hover:bg-bitcoin/90 disabled:opacity-40 text-white font-display font-bold py-4 rounded-xl text-lg transition-all flex items-center justify-center gap-2">
+            {txState === 'signing'
+              ? <><Loader size={18} className="animate-spin" />Waiting for OP_WALLET...</>
+              : 'Swap'}
           </button>
+
           <div className="flex items-center gap-2 justify-center">
             <Info size={12} className="text-op-text" />
             <p className="text-xs text-op-text">OP_WALLET will ask for approval before signing</p>
