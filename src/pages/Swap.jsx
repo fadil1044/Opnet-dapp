@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ArrowUpDown, Loader, CheckCircle, AlertCircle, ExternalLink, Info } from 'lucide-react';
+import { ArrowUpDown, Loader, CheckCircle, AlertCircle, Info } from 'lucide-react';
 import { useWallet } from '../contexts/WalletContext';
 import ConnectGuard from '../components/ConnectGuard';
 
@@ -8,8 +8,6 @@ const TOKENS = [
   { symbol: 'MOTO', name: 'Motoswap Token', isNative: false, logo: '🏍', contractAddress: 'bcrt1p...' },
   { symbol: 'ORDI', name: 'Ordinals Token', isNative: false, logo: '📜', contractAddress: 'bcrt1p...' },
 ];
-
-const ROUTER = 'bcrt1p...';
 
 function TokenSelect({ token, onSelect, tokens }) {
   const [open, setOpen] = useState(false);
@@ -41,7 +39,7 @@ function TokenSelect({ token, onSelect, tokens }) {
 }
 
 function SwapContent() {
-  const { executeContract, address } = useWallet();
+  const { address } = useWallet();
   const [tokenIn, setTokenIn] = useState(TOKENS[0]);
   const [tokenOut, setTokenOut] = useState(TOKENS[1]);
   const [amountIn, setAmountIn] = useState('');
@@ -53,18 +51,45 @@ function SwapContent() {
 
   const handleSwap = async () => {
     if (!amountIn || parseFloat(amountIn) <= 0) return;
-    setTxState('signing'); setErrorMsg('');
+    setTxState('signing');
+    setErrorMsg('');
     try {
-      const result = await executeContract(ROUTER, 'swapExactTokensForTokens', [
-        Math.floor(parseFloat(amountIn) * 1e8),
-        Math.floor(parseFloat(estimatedOut) * 0.995 * 1e8),
-        [tokenIn.contractAddress || 'native', tokenOut.contractAddress || 'native'],
-        address,
-        Math.floor(Date.now() / 1000) + 1200,
-      ], tokenIn.isNative ? Math.floor(parseFloat(amountIn) * 1e8) : 0);
-      setTxHash(result?.txid || result?.hash || 'pending');
+      const wallet = window.opnet;
+      if (!wallet) throw new Error('OP_WALLET not found');
+
+      // Log wallet to see what methods exist
+      console.log('wallet keys:', Object.keys(wallet));
+
+      const amountSats = Math.floor(parseFloat(amountIn) * 1e8);
+      const minOut = Math.floor(parseFloat(estimatedOut) * 0.995 * 1e8);
+
+      let result;
+
+      if (typeof wallet.signInteraction === 'function') {
+        result = await wallet.signInteraction({
+          to: 'bcrt1p...',
+          method: 'swapExactTokensForTokens',
+          params: [amountSats, minOut, address],
+          value: tokenIn.isNative ? amountSats : 0,
+        });
+      } else if (typeof wallet.executeContract === 'function') {
+        result = await wallet.executeContract(
+          'bcrt1p...',
+          'swapExactTokensForTokens',
+          [amountSats, minOut, address],
+          tokenIn.isNative ? amountSats : 0
+        );
+      } else {
+        // Show all available methods
+        const methods = Object.getOwnPropertyNames(wallet).filter(k => typeof wallet[k] === 'function');
+        const protoMethods = Object.getOwnPropertyNames(Object.getPrototypeOf(wallet)).filter(k => typeof wallet[k] === 'function');
+        throw new Error('Available methods: ' + [...methods, ...protoMethods].join(', '));
+      }
+
+      setTxHash(result?.txid || result?.hash || 'submitted');
       setTxState('success');
     } catch (err) {
+      console.error('Swap error:', err);
       setErrorMsg(err.message || 'Transaction failed');
       setTxState('error');
     }
@@ -122,22 +147,17 @@ function SwapContent() {
           {txState === 'success' && (
             <div className="bg-green-500/10 border border-green-500/30 rounded-xl p-4 flex items-center gap-3">
               <CheckCircle size={16} className="text-green-400" />
-              <div>
-                <p className="text-green-300 text-sm font-medium">Swap submitted!</p>
-                {txHash && <a href={`https://opscan.org/tx/${txHash}`} target="_blank" rel="noopener noreferrer"
-                  className="text-xs text-green-400/70 flex items-center gap-1 mt-1 hover:text-green-400">
-                  View on OPScan <ExternalLink size={10} /></a>}
-              </div>
+              <p className="text-green-300 text-sm font-medium">Swap submitted! ✓</p>
             </div>
           )}
           {txState === 'error' && (
             <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 flex items-center gap-3">
-              <AlertCircle size={16} className="text-red-400" />
-              <p className="text-red-300 text-sm">{errorMsg}</p>
+              <AlertCircle size={16} className="text-red-400 flex-shrink-0" />
+              <p className="text-red-300 text-sm break-all">{errorMsg}</p>
             </div>
           )}
           <button onClick={handleSwap} disabled={!amountIn || txState === 'signing'}
-            className="w-full bg-bitcoin hover:bg-bitcoin/90 disabled:opacity-40 disabled:cursor-not-allowed text-white font-display font-bold py-4 rounded-xl text-lg transition-all hover:shadow-lg hover:shadow-bitcoin/20 flex items-center justify-center gap-2">
+            className="w-full bg-bitcoin hover:bg-bitcoin/90 disabled:opacity-40 disabled:cursor-not-allowed text-white font-display font-bold py-4 rounded-xl text-lg transition-all flex items-center justify-center gap-2">
             {txState === 'signing' ? <><Loader size={18} className="animate-spin" />Waiting for OP_WALLET...</> : 'Swap'}
           </button>
           <div className="flex items-center gap-2 justify-center">
