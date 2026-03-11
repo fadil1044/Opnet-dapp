@@ -1,0 +1,21 @@
+{
+  "name": "bitcoindefi-contracts",
+  "version": "1.0.0",
+  "description": "BitcoinDeFi OP_NET Smart Contracts",
+  "scripts": {
+    "build:swap": "asc contracts/SwapRouter.ts -o build/SwapRouter.wasm --target release",
+    "build:nft": "asc contracts/NFTMarketplace.ts -o build/NFTMarketplace.wasm --target release",
+    "build:dao": "asc contracts/DAOGovernance.ts -o build/DAOGovernance.wasm --target release",
+    "build:lending": "asc contracts/LendingProtocol.ts -o build/LendingProtocol.wasm --target release",
+    "build:raffle": "asc contracts/RaffleLottery.ts -o build/RaffleLottery.wasm --target release"
+  },
+  "dependencies": {
+    "@btc-vision/btc-runtime": "latest",
+    "@btc-vision/transaction": "latest",
+    "@btc-vision/bitcoin": "latest",
+    "opnet": "latest"
+  },
+  "devDependencies": {
+    "assemblyscript": "^0.27.0"
+  }
+}
